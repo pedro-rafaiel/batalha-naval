@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Batalha Naval - Placar & Revanche</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 20px; display: flex; flex-direction: column; align-items: center; }
+        
+        /* --- Estilos do Lobby --- */
+        #lobby-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            border: 2px solid #ccc;
+            padding: 20px;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        /* MUDANÇA: Inputs do Lobby */
+        #lobby-container input {
+            font-size: 1.5em;
+            padding: 10px;
+            text-align: center;
+            width: 250px; /* Mais largo para nomes */
+            margin-bottom: 10px;
+        }
+        #roomInput { text-transform: uppercase; }
+        #lobby-container button {
+            font-size: 1.2em;
+            padding: 10px 20px;
+            width: 100%;
+            margin-top: 5px;
+        }
+        
+        /* --- O Jogo (escondido por padrão) --- */
+        #game-container {
+            display: none; 
+        }
+        
+        /* MUDANÇA: Placar */
+        #score-display {
+            font-size: 1.8em;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-align: center;
+            color: #333;
+        }
+        #score-display .you { color: #007bff; }
+        #score-display .opponent { color: #dc3545; }
+
+        #game-room-info {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        #game-room-info span {
+            font-family: monospace;
+            background-color: #ddd;
+            padding: 2px 6px;
+            border-radius: 4px;
+            letter-spacing: 1px;
+        }
+        
+        /* MUDANÇA: Botão de Revanche */
+        #rematchButton {
+            font-size: 1.2em;
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-bottom: 15px;
+        }
+        
+        /* (Estilos do Jogo - Idênticos) */
+        #status { font-size: 1.5em; font-weight: bold; margin-bottom: 20px; text-align: center; }
+        #game-boards { display: flex; justify-content: center; gap: 40px; }
+        .board-container { text-align: center; }
+        .grid { border-collapse: collapse; border: 2px solid #333; }
+        .grid td { width: 40px; height: 40px; border: 1px solid #ccc; }
+        #my-board.setup-mode td:hover { background-color: #cceeff; cursor: crosshair; }
+        #my-board .cell-water { background-color: #aaddff; }
+        #my-board .cell-ship { background-color: #999; }
+        #my-board .cell-miss { background-color: #88bbdd; }
+        #my-board .cell-hit { background-color: #ff6666; }
+        #opponent-board td { background-color: #eee; }
+        #opponent-board .cell-miss { background-color: #555; cursor: not-allowed; }  
+        #opponent-board .cell-hit { background-color: #ff6666; cursor: not-allowed; }  
+        #opponent-board:not(.turn-disabled) td:not(.cell-hit):not(.cell-miss):hover { background-color: #ddd; cursor: pointer; }
+        #opponent-board.turn-disabled td { cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    
+    <div id="lobby-container">
+        <h1>Batalha Naval</h1>
+        <input type="text" id="usernameInput" placeholder="SEU NOME" maxlength="15">
+        <input type="text" id="roomInput" placeholder="CÓDIGO DA SALA" maxlength="4">
+        <button id="joinButton" onclick="joinRoom()">Entrar na Sala</button>
+        <hr style="width:100%; margin: 15px 0;">
+        <button id="createButton" onclick="createRoom()">Criar Nova Sala</button>
+    </div>
+
+    <div id="game-container">
+        <div id="score-display"></div>
+        
+        <h2 id="status">Conectando ao servidor...</h2>
+        <div id="game-room-info"></div>
+        
+        <button id="rematchButton" onclick="requestRematch()" style="display: none;">
+            Jogar Novamente
+        </button>
+        
+        <div id="game-area">
+            <button id="prepareButton" onclick="sendBoardSetup()" style="display: none;">
+                Estou Pronto (Enviar Tabuleiro)
+            </button>
+        </div>
+        <div id="game-boards">
+            <div class="board-container"><h3>Meu Tabuleiro</h3><div id="my-board"></div></div>
+            <div class="board-container"><h3>Tabuleiro do Oponente</h3><div id="opponent-board"></div></div>
+        </div>
+    </div>
+
+
+    <script>
+        // --- Constantes do Jogo ---
+        const BOARD_SIZE = 5; 
+        const SHIP_COUNT = 5; 
+
+        // --- Elementos da UI (Lobby) ---
+        const lobbyContainer = document.getElementById("lobby-container");
+        const usernameInput = document.getElementById("usernameInput");
+        const roomInput = document.getElementById("roomInput");
+        
+        // --- Elementos da UI (Jogo) ---
+        const gameContainer = document.getElementById("game-container");
+        const statusEl = document.getElementById("status");
+        const scoreDisplayEl = document.getElementById("score-display"); // MUDANÇA: Placar
+        const rematchButton = document.getElementById("rematchButton"); // MUDANÇA: Revanche
+        const gameRoomInfo = document.getElementById("game-room-info");
+        const prepareButton = document.getElementById("prepareButton");
+        const myBoardEl = document.getElementById("my-board");
+        const opponentBoardEl = document.getElementById("opponent-board");
+        const gameBoardsEl = document.getElementById("game-boards");
+
+        // --- Estado Global ---
+        let ws = null; 
+        let currentRoomId = ""; 
+        let myUsername = ""; // MUDANÇA: Nomes
+        let opponentUsername = ""; // MUDANÇA: Nomes
+        
+        let isMyTurn = false;
+        let meuTabuleiro = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
+        let shipsPlaced = 0; 
+        let isInSetupMode = false;
+        
+        // --- Lógica do Lobby ---
+
+        function createRoom() {
+            const newRoomId = Math.random().toString(36).substring(2, 6).toUpperCase();
+            roomInput.value = newRoomId;
+            joinRoom(); 
+        }
+
+        function joinRoom() {
+            const roomId = roomInput.value.toUpperCase();
+            const username = usernameInput.value.trim();
+
+            if (!username) {
+                alert("Por favor, digite seu nome.");
+                return;
+            }
+            if (roomId.length !== 4) {
+                alert("O código da sala deve ter 4 caracteres.");
+                return;
+            }
+            
+            currentRoomId = roomId;
+            myUsername = username; // Salva o nome
+
+            // MUDANÇA: Envia o nome de usuário como um parâmetro de query na URL
+            const wsProtocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+            const wsUrl = `${wsProtocol}${window.location.host}/ws/${currentRoomId}?username=${encodeURIComponent(myUsername)}`;
+
+            console.log(`Conectando em: ${wsUrl}`);
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = onWsOpen;
+            ws.onmessage = onWsMessage;
+            ws.onclose = onWsClose;
+            ws.onerror = onWsError;
+        }
+
+        function showGameContainer() {
+            lobbyContainer.style.display = 'none';
+            gameContainer.style.display = 'block';
+        }
+
+        // --- Lógica de Conexão WebSocket ---
+        
+        function onWsOpen() {
+            console.log("Conectado ao WebSocket.");
+            statusEl.innerText = "Conectado. Aguardando sala...";
+        }
+
+        function onWsClose() {
+            statusEl.innerText = "Desconectado do servidor.";
+            alert("Conexão perdida. Voltando ao Lobby.");
+            window.location.reload(); 
+        }
+        
+        function onWsError(err) {
+            console.error("Erro no WebSocket:", err);
+            alert("Erro ao conectar na sala. Verifique o código ou tente novamente.");
+            ws = null; 
+            currentRoomId = "";
+        }
+
+        function send(data) { 
+            if (ws) {
+                ws.send(JSON.stringify(data)); 
+            }
+        }
+        
+        // --- Lógica de Recebimento de Mensagens (O Jogo) ---
+        function onWsMessage(event) {
+            const msg = JSON.parse(event.data);
+            console.log("Mensagem recebida:", msg);
+
+            // Mensagens do servidor que controlam a UI
+            if (msg.type === 'room_full') {
+                alert("Esta sala está cheia!");
+                ws.close();
+                return;
+            }
+            if (msg.type === 'waiting_for_opponent') {
+                showGameContainer(); 
+                statusEl.innerText = "Aguardando oponente...";
+                gameRoomInfo.innerHTML = `Sala: <span>${currentRoomId}</span>`;
+                return;
+            }
+            if (msg.type === 'game_start') {
+                showGameContainer(); 
+                // MUDANÇA: Salva nomes, atualiza placar, reinicia o jogo
+                myUsername = msg.my_name;
+                opponentUsername = msg.opponent_name;
+                updateScore(msg.score);
+                
+                statusEl.innerText = `Oponente: ${opponentUsername} entrou.\nPosicione seus ${SHIP_COUNT} navios!`;
+                gameRoomInfo.innerHTML = `Sala: <span>${currentRoomId}</span>`;
+                gameBoardsEl.style.display = 'flex';
+                rematchButton.style.display = 'none'; // Esconde o botão de revanche
+                
+                setupBoardPlacement(); // Reinicia o tabuleiro
+                return;
+            }
+
+            // (O resto da lógica do jogo)
+            switch (msg.type) {
+                case 'wait_for_setup':
+                    statusEl.innerText = "Tabuleiro enviado. Aguardando oponente...";
+                    prepareButton.style.display = 'none'; 
+                    break;
+
+                case 'start_play':
+                    statusEl.innerText = "Jogo começando!";
+                    prepareButton.style.display = 'none';
+                    if (msg.turn === 'you') {
+                        setTurn(true);
+                    } else {
+                        setTurn(false);
+                    }
+                    break;
+                
+                case 'shot_result': 
+                    setTurn(false);
+                    updateCell(opponentBoardEl, msg.pos[0], msg.pos[1], msg.result); 
+                    if (msg.result === 'hit') {
+                        statusEl.innerText = "Você ACERTOU! " + statusEl.innerText;
+                    } else {
+                        statusEl.innerText = "Você atirou na ÁGUA. " + statusEl.innerText;
+                    }
+                    break;
+                
+                case 'shot_received': 
+                    setTurn(true); 
+                    if (msg.result === 'hit') {
+                        statusEl.innerText = "Seu navio foi ATINGIDO! " + statusEl.innerText;
+                    } else {
+                        statusEl.innerText = "O oponente atirou na ÁGUA. " + statusEl.innerText;
+                    }
+                    meuTabuleiro[msg.pos[1]][msg.pos[0]] = (msg.result === 'hit') ? 2 : -1;
+                    renderMyBoard(); 
+                    break;
+                
+                case 'game_over':
+                    isMyTurn = false;
+                    statusEl.innerText = (msg.result === 'you_win') ? "VITÓRIA! Você venceu!" : "DERROTA! Você perdeu.";
+                    opponentBoardEl.classList.add("turn-disabled");
+                    updateScore(msg.score); // Atualiza o placar final
+                    rematchButton.style.display = 'block'; // MUDANÇA: Mostra o botão
+                    break;
+
+                // MUDANÇA: Novos casos de revanche
+                case 'rematch_pending':
+                    statusEl.innerText = "Aguardando oponente aceitar a revanche...";
+                    rematchButton.style.display = 'none';
+                    break;
+                
+                case 'rematch_requested':
+                    statusEl.innerText = "Oponente quer jogar novamente! Clique em 'Jogar Novamente'.";
+                    rematchButton.style.display = 'block'; // Garante que o botão apareça
+                    break;
+
+                case 'opponent_left':
+                    statusEl.innerText = "O oponente saiu. Atualize a página para um novo jogo.";
+                    isMyTurn = false;
+                    gameBoardsEl.style.display = 'none';
+                    prepareButton.style.display = 'none';
+                    rematchButton.style.display = 'none';
+                    break;
+                
+                case 'error':
+                    alert("Erro do servidor: " + msg.message);
+                    if (isInSetupMode) {
+                        prepareButton.style.display = 'block';
+                        prepareButton.disabled = false;
+                        updateSetupStatus(); 
+                    } else if (!isMyTurn && !isInSetupMode) { // Se o erro foi no turno do oponente
+                        // Não faz nada
+                    } else {
+                        setTurn(true); // Devolve o turno
+                    }
+                    break;
+            }
+        };
+
+        // --- Funções da UI e Jogo ---
+
+        // MUDANÇA: Atualiza o placar
+        function updateScore(score) {
+            scoreDisplayEl.innerHTML = `
+                <span class="you">${myUsername}: ${score.you}</span> - 
+                <span class="opponent">${opponentUsername}: ${score.opponent}</span>
+            `;
+        }
+        
+        // MUDANÇA: Envia pedido de revanche
+        function requestRematch() {
+            send({ type: 'request_rematch' });
+        }
+
+        function setTurn(myTurn) {
+            isMyTurn = myTurn;
+            isInSetupMode = false; 
+            myBoardEl.classList.remove("setup-mode");
+            if (myTurn) {
+                // MUDANÇA: Usa nomes
+                statusEl.innerText = `Sua vez de atirar, ${myUsername}!`;
+                opponentBoardEl.classList.remove("turn-disabled");
+            } else {
+                // MUDANÇA: Usa nomes
+                statusEl.innerText = `Aguarde ${opponentUsername} atirar...`;
+                opponentBoardEl.classList.add("turn-disabled");
+            }
+        }
+        
+        function setupBoardPlacement() {
+            meuTabuleiro = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
+            shipsPlaced = 0; 
+            createGrid("my-board", true); 
+            createGrid("opponent-board", true); 
+            myBoardEl.classList.add("setup-mode");
+            isInSetupMode = true;
+            prepareButton.style.display = 'block';
+            prepareButton.disabled = true;
+            updateSetupStatus();
+        }
+        
+        function updateSetupStatus() {
+            const remaining = SHIP_COUNT - shipsPlaced;
+            if (remaining === 0) {
+                statusEl.innerText = "Todos os navios posicionados! Clique em 'Estou Pronto'.";
+                prepareButton.disabled = false;
+            } else {
+                statusEl.innerText = `Posicione seus ${SHIP_COUNT} navios (1 por célula). Faltam: ${remaining}`;
+                prepareButton.disabled = true;
+            }
+        }
+        
+        function onCellClick(event) {
+            const boardId = event.target.closest(".grid").parentElement.id;
+            if (boardId === 'my-board' && isInSetupMode) {
+                handleShipPlacement(event.target);
+            }
+            else if (boardId === 'opponent-board' && isMyTurn) {
+                handleFiringShot(event.target);
+            }
+        }
+        
+        function handleShipPlacement(cell) {
+            if (!isInSetupMode) return;
+            const x = parseInt(cell.dataset.x);
+            const y = parseInt(cell.dataset.y);
+            if (meuTabuleiro[y][x] === 1) {
+                meuTabuleiro[y][x] = 0;
+                shipsPlaced--;
+            } else if (meuTabuleiro[y][x] === 0) {
+                if (shipsPlaced < SHIP_COUNT) {
+                    meuTabuleiro[y][x] = 1;
+                    shipsPlaced++;
+                } else {
+                    alert(`Você já posicionou todos os ${SHIP_COUNT} navios!`);
+                }
+            }
+            renderMyBoard(); 
+            updateSetupStatus(); 
+        }
+
+        function handleFiringShot(cell) {
+            if (!isMyTurn) return; 
+            if (cell.classList.contains('cell-hit') || cell.classList.contains('cell-miss')) { return; }
+            const x = parseInt(cell.dataset.x);
+            const y = parseInt(cell.dataset.y);
+            send({ type: 'fire_shot', pos: [x, y] });
+            setTurn(false);
+            statusEl.innerText = "Atirando...";
+        }
+
+        function createGrid(elementId, isClickable = false) {
+            const boardElement = document.getElementById(elementId);
+            boardElement.innerHTML = ""; 
+            const table = document.createElement("table");
+            table.className = "grid";
+            for (let y = 0; y < BOARD_SIZE; y++) {
+                const tr = document.createElement("tr");
+                for (let x = 0; x < BOARD_SIZE; x++) { 
+                    const td = document.createElement("td");
+                    td.dataset.x = x;
+                    td.dataset.y = y;
+                    if (isClickable) {
+                        td.addEventListener("click", onCellClick);
+                    }
+                    tr.appendChild(td);
+                }
+                table.appendChild(tr);
+            }
+            boardElement.appendChild(table);
+        }
+
+        function renderMyBoard() {
+            for (let y = 0; y < BOARD_SIZE; y++) { 
+                for (let x = 0; x < BOARD_SIZE; x++) { 
+                    const val = meuTabuleiro[y][x];
+                    let className = 'cell-water';
+                    if (val === 1) className = 'cell-ship';
+                    else if (val === 2) className = 'cell-hit';
+                    else if (val === -1) className = 'cell-miss';
+                    updateCell(myBoardEl, x, y, className);
+                }
+            }
+        }
+
+        function sendBoardSetup() {
+            if (shipsPlaced !== SHIP_COUNT) {
+                alert(`Você deve posicionar exatamente ${SHIP_COUNT} navios!`);
+                return;
+            }
+            send({ type: 'setup_board', board: meuTabuleiro });
+            statusEl.innerText = "Enviando tabuleiro...";
+            prepareButton.style.display = 'none';
+        }
+
+        function updateCell(boardEl, x, y, className) {
+            if (!boardEl) return;
+            const cell = boardEl.querySelector(`td[data-x='${x}'][data-y='${y}']`);
+            if (cell) {
+                cell.className = className;
+            }
+        }
+    </script>
+</body>
+</html>
