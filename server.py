@@ -39,10 +39,10 @@ class GameRoom:
         self.room_id = room_id
         self.host: Optional[WebSocket] = None
         self.guest: Optional[WebSocket] = None
-        # MUDANÇA: Armazena dados mais complexos
+        # Armazena dados mais complexos
         self.host_data: Dict = {}
         self.guest_data: Dict = {}
-        # MUDANÇA: Armazena o placar da sala
+        # Armazena o placar da sala
         self.score: Dict[str, int] = {"host": 0, "guest": 0}
         logger.info(f"Sala {room_id} criada.")
 
@@ -73,7 +73,7 @@ class GameRoom:
         return {"you": 0, "opponent": 0}
 
     async def add_player(self, websocket: WebSocket, username: str) -> bool:
-        """ MUDANÇA: Adiciona um jogador com seu nome de usuário """
+        """ Adiciona um jogador com seu nome de usuário """
         
         # Sanitiza o nome de usuário (evita nomes muito longos ou HTML)
         username = username.strip()[:15]
@@ -82,7 +82,7 @@ class GameRoom:
             self.host = websocket
             self.host_data = {"username": username, "wants_rematch": False}
             await websocket.send_json({"type": "waiting_for_opponent"})
-            logger.info(f"Jogador '{username}' ({websocket.client.port}) é HOST da sala {self.room_id}")
+            logger.info(f"Jogador '{username}' ({getattr(websocket.client, 'port', 'unknown')}) é HOST da sala {self.room_id}")
             return True
         elif self.guest is None:
             self.guest = websocket
@@ -101,7 +101,7 @@ class GameRoom:
                 "my_name": self.guest_data["username"],
                 "score": self.get_score(self.guest)
             })
-            logger.info(f"Jogador '{username}' ({websocket.client.port}) é GUEST da sala {self.room_id}. Jogo começando.")
+            logger.info(f"Jogador '{username}' ({getattr(websocket.client, 'port', 'unknown')}) é GUEST da sala {self.room_id}. Jogo começando.")
             return True
         else:
             await websocket.send_json({"type": "room_full"})
@@ -118,10 +118,15 @@ class GameRoom:
             self.guest = None
             self.guest_data = {}
 
-        logger.info(f"Jogador {websocket.client.port} saiu da sala {self.room_id}")
+        logger.info(f"Jogador {getattr(websocket.client, 'port', 'unknown')} saiu da sala {self.room_id}")
 
-        if opponent and opponent.client_state.name == 'CONNECTED':
-            await opponent.send_json({"type": "opponent_left"})
+        # Notifica o oponente se ainda conectado
+        try:
+            if opponent and getattr(opponent, "client_state", None) and opponent.client_state.name == 'CONNECTED':
+                await opponent.send_json({"type": "opponent_left"})
+        except Exception:
+            # Se enviar falhar, ignora (opponent desconectado)
+            pass
             
     def reset_game_state(self):
         """ Limpa os tabuleiros e estados de revanche para um novo jogo """
@@ -154,13 +159,13 @@ app = FastAPI()
 manager = RoomManager()
 
 
-# --- Endpoint do WebSocket (Atualizado) ---
+# --- Endpoint do WebSocket (Atualizado para aceitar ambos 'setup_board' e 'board_setup') ---
 
 @app.websocket("/ws/{room_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
     room_id: str = Path(..., min_length=4, max_length=4),
-    # MUDANÇA: Recebe o nome de usuário pela URL
+    # Recebe o nome de usuário pela URL
     username: str = Query(default="Jogador", min_length=1, max_length=15)
 ):
     
@@ -187,15 +192,16 @@ async def websocket_endpoint(
                 logger.warning("Ação recebida, mas oponente/dados não encontrados. Ignorando.")
                 continue
 
-            # 1. Mensagem: "setup_board"
-            if data['type'] == 'setup_board':
+            # 1. Mensagem: "setup_board" OR "board_setup"
+            # Aceitamos ambos os nomes para compatibilidade com diferentes clientes
+            if data['type'] in ('setup_board', 'board_setup'):
                 board_data = data.get('board')
                 if not validate_board(board_data):
-                    logger.warning(f"Jogador '{my_data['username']}' enviou tabuleiro INVÁLIDO.")
+                    logger.warning(f"Jogador '{my_data.get('username','?')}' enviou tabuleiro INVÁLIDO.")
                     await websocket.send_json({"type": "error", "message": "Tabuleiro inválido."})
                     continue
                 
-                logger.info(f"Jogador '{my_data['username']}' enviou tabuleiro VÁLIDO.")
+                logger.info(f"Jogador '{my_data.get('username','?')}' enviou tabuleiro VÁLIDO.")
                 my_data['board'] = board_data
                 
                 if 'board' in opponent_data:
@@ -215,12 +221,17 @@ async def websocket_endpoint(
                 
                 opponent_board = opponent_data.get('board')
                 if not opponent_board: # Oponente ainda não configurou o tabuleiro
+                    await websocket.send_json({"type": "error", "message": "O oponente não está pronto."})
                     continue
                 
-                pos = data['pos']
+                pos = data.get('pos')
+                if not (isinstance(pos, (list, tuple)) and len(pos) == 2):
+                    await websocket.send_json({"type": "error", "message": "Posição inválida."})
+                    continue
+
                 x, y = pos[0], pos[1]
                 
-                if not (0 <= x < BOARD_SIZE and 0 <= y < BOARD_SIZE):
+                if not (isinstance(x, int) and isinstance(y, int) and 0 <= x < BOARD_SIZE and 0 <= y < BOARD_SIZE):
                     await websocket.send_json({"type": "error", "message": "Coordenada inválida."})
                     continue
 
@@ -238,11 +249,11 @@ async def websocket_endpoint(
                 is_game_over = not any(1 in row for row in opponent_board)
                 
                 if is_game_over:
-                    # MUDANÇA: Atualiza o placar
+                    # Atualiza o placar
                     if websocket == room.host: room.score["host"] += 1
                     else: room.score["guest"] += 1
                     
-                    logger.info(f"Jogo encerrado na sala {room_id}. Vencedor: {my_data['username']}")
+                    logger.info(f"Jogo encerrado na sala {room_id}. Vencedor: {my_data.get('username','?')}")
                     
                     # Envia o resultado E o novo placar
                     await websocket.send_json({"type": "game_over", "result": "you_win", "score": room.get_score(websocket)})
@@ -250,10 +261,11 @@ async def websocket_endpoint(
                 else:
                     my_data['turn'] = False
                     opponent_data['turn'] = True
-                    await websocket.send_json({"type": "shot_result", "pos": pos, "result": result, "turn": "opponent"})
-                    await opponent.send_json({"type": "shot_received", "pos": pos, "result": result, "turn": "you"})
+                    # Envia resultado ao atirador e notifica o oponente que recebeu o tiro
+                    await websocket.send_json({"type": "shot_result", "pos": pos, "result": result, "turn": "opponent", "score": room.get_score(websocket)})
+                    await opponent.send_json({"type": "shot_received", "pos": pos, "result": result, "turn": "you", "score": room.get_score(opponent)})
 
-            # 3. MUDANÇA: Mensagem "request_rematch"
+            # 3. Mensagem: "request_rematch"
             elif data['type'] == 'request_rematch':
                 my_data['wants_rematch'] = True
                 
@@ -277,15 +289,15 @@ async def websocket_endpoint(
                     })
                 else:
                     # Apenas este jogador quer (por enquanto)
-                    logger.info(f"Jogador '{my_data['username']}' pediu revanche.")
+                    logger.info(f"Jogador '{my_data.get('username','?')}' pediu revanche.")
                     await websocket.send_json({"type": "rematch_pending"})
                     await opponent.send_json({"type": "rematch_requested"})
 
 
     except WebSocketDisconnect:
-        logger.info(f"WebSocketDisconnect: Jogador {websocket.client.port} desconectou da sala {room_id}")
+        logger.info(f"WebSocketDisconnect: Jogador {getattr(websocket.client, 'port', 'unknown')} desconectou da sala {room_id}")
     except Exception as e:
-        logger.error(f"Erro inesperado no websocket {websocket.client.port}: {e}")
+        logger.error(f"Erro inesperado no websocket {getattr(websocket.client, 'port', 'unknown')}: {e}")
     finally:
         await room.remove_player(websocket)
         manager.remove_room_if_empty(room_id)
