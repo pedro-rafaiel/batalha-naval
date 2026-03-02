@@ -77,7 +77,7 @@ function handleServerMessage(msg) {
             infoEl.innerText = `SALA: ${roomId} | Oponente: ${msg.opponent_name}`;
             statusEl.innerText = "Posicione seus 5 navios no seu tabuleiro";
             
-            setupGrids(); // Reconstrói o HTML limpo
+            setupGrids();
             
             prepareButton.style.display = 'block';
             rematchButton.style.display = 'none';
@@ -95,12 +95,12 @@ function handleServerMessage(msg) {
 
         case 'shot_result':
             updateGridDisplay("opponent-board", msg.pos, msg.result);
-            setTurn(msg.turn === 'you'); // Sincroniza turno conforme servidor
+            setTurn(msg.turn === 'you');
             break;
 
         case 'shot_received':
             updateGridDisplay("my-board", msg.pos, msg.result);
-            setTurn(msg.turn === 'you'); // Sincroniza turno conforme servidor
+            setTurn(msg.turn === 'you');
             break;
 
         case 'rematch_requested':
@@ -158,7 +158,7 @@ function onCellClick(boardId, x, y, cell) {
         if (cell.classList.contains("cell-hit") || cell.classList.contains("cell-miss")) return;
         
         server.call('fire_shot', { pos: [x, y] });
-        setTurn(false); // Trava interface ate resposta do servidor
+        setTurn(false);
     }
 }
 

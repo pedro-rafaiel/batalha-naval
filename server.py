@@ -7,7 +7,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from typing import Dict, Optional
 
-# Configuracao de logs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

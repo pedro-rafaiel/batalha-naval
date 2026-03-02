@@ -3,7 +3,7 @@ body {
     margin: 0; padding: 20px;
     display: flex; flex-direction: column;
     align-items: center; 
-    background: #0a192f; /* Azul marinho escuro */
+    background: #0a192f;
     color: #e6f1ff;
 }
 
@@ -31,7 +31,6 @@ button {
 #createButton { background-color: #64ffda; color: #0a192f; }
 #prepareButton { background-color: #ffc107; color: #000; font-size: 1.2em; }
 
-/* Botão de Revanche Estilizado */
 #rematchButton {
     background-color: transparent;
     color: #64ffda;
@@ -49,7 +48,6 @@ button {
     color: #0a192f;
 }
 
-/* Estrutura dos Tabuleiros */
 #game-boards {
     display: flex;
     gap: 40px;
@@ -60,7 +58,6 @@ button {
 
 .board-container { text-align: center; }
 
-/* Grid de Jogo Estilizado com Imagens */
 .grid { border-collapse: separate; border-spacing: 4px; }
 
 .grid td {
@@ -74,7 +71,6 @@ button {
     cursor: pointer;
 }
 
-/* Estados das Células (Ajuste de caminho ../ para sair da pasta css) */
 .cell-ship { 
     background-image: url('../img/navio.svg'); 
     background-color: #3e4c5f !important;
@@ -91,7 +87,6 @@ button {
     background-color: #233554 !important;
 }
 
-/* Feedback de Turno e Interatividade */
 .my-turn #opponent-board .grid td:hover {
     background-color: #233554;
     transform: scale(1.05);
@@ -109,7 +104,6 @@ button {
     text-align: center;
 }
 
-/* Animação de Impacto */
 @keyframes shake {
     0% { transform: translate(1px, 1px) rotate(0deg); }
     10% { transform: translate(-1px, -2px) rotate(-1deg); }
