@@ -10,11 +10,11 @@ class GameServerProxy {
     }
 }
 
-// --- VARIAVEIS DE ESTADO ---
+// --- VARIÁVEIS DE ESTADO ---
 const BOARD_SIZE = 5;
 const SHIP_COUNT = 5;
 let server = null;
-let meuTabuleiro = [];
+let meuTabuleiro = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
 let shipsPlaced = 0;
 let isMyTurn = false;
 
@@ -26,7 +26,7 @@ const createButton = document.getElementById("createButton");
 const prepareButton = document.getElementById("prepareButton");
 const rematchButton = document.getElementById("rematchButton");
 
-// --- LOGICA DE CONEXAO ---
+// --- LÓGICA DE CONEXÃO ---
 function connect() {
     const roomIdInput = document.getElementById("roomInput");
     const usernameInput = document.getElementById("usernameInput");
@@ -35,11 +35,15 @@ function connect() {
     const username = usernameInput.value.trim();
     
     if (!username || roomId.length !== 4) {
-        return alert("Por favor, insira um nome e um codigo de sala de 4 digitos.");
+        return alert("Por favor, insira um nome e um código de sala de 4 dígitos.");
     }
 
-    const host = window.location.host || "127.0.0.1:8000";
-    const ws = new WebSocket(`ws://${host}/ws/${roomId}?username=${username}`);
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    
+    const backendHost = isLocal ? "127.0.0.1:8000" : "seu-backend-no-render.onrender.com";
+    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+
+    const ws = new WebSocket(`${protocol}://${backendHost}/ws/${roomId}?username=${username}`);
 
     ws.onopen = () => {
         server = new GameServerProxy(ws);
@@ -54,7 +58,7 @@ function connect() {
 
     ws.onerror = (error) => {
         console.error("Erro no WebSocket:", error);
-        statusEl.innerText = "Erro de conexao com o servidor.";
+        statusEl.innerText = "Erro de conexão com o servidor.";
     };
 }
 
@@ -69,7 +73,6 @@ function handleServerMessage(msg) {
             break;
 
         case 'game_start':
-            // Reset de estado para nova rodada
             shipsPlaced = 0;
             meuTabuleiro = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
             isMyTurn = false;
@@ -95,12 +98,14 @@ function handleServerMessage(msg) {
 
         case 'shot_result':
             updateGridDisplay("opponent-board", msg.pos, msg.result);
-            setTurn(msg.turn === 'you');
+            // Sincroniza o turno baseado na resposta do servidor
+            if (msg.turn) setTurn(msg.turn === 'you');
             break;
 
         case 'shot_received':
             updateGridDisplay("my-board", msg.pos, msg.result);
-            setTurn(msg.turn === 'you');
+            // Sincroniza o turno baseado na resposta do servidor
+            if (msg.turn) setTurn(msg.turn === 'you');
             break;
 
         case 'rematch_requested':
@@ -109,23 +114,37 @@ function handleServerMessage(msg) {
 
         case 'game_over':
             const isWin = msg.result === 'you_win';
-            statusEl.innerText = isWin ? "VITÓRIA GLORIOSA!" : "VOCÊ FOI AFUNDADO...";
+            const imgPath = isWin ? 'img/win.svg' : 'img/lose.svg';
+            
+            statusEl.innerHTML = `
+                <div style="text-align:center">
+                    <img src="${imgPath}" style="width:80px; display:block; margin: 0 auto 10px">
+                    <span style="color: ${isWin ? '#64ffda' : '#ff4d4d'}">
+                        ${isWin ? "VITÓRIA GLORIOSA!" : "VOCÊ FOI AFUNDADO..."}
+                    </span>
+                </div>
+            `;
+            
             document.getElementById("opponent-board").classList.add("turn-disabled");
             rematchButton.style.display = 'block';
             break;
 
         case 'opponent_left':
             statusEl.innerText = "Oponente desconectou.";
+            infoEl.innerText = "Partida encerrada.";
             rematchButton.style.display = 'none';
             break;
             
         case 'error':
             alert(msg.message);
+            if (msg.message.includes("vez") || msg.message.includes("atirou")) {
+                setTurn(true);
+            }
             break;
     }
 }
 
-// --- FUNCOES DE INTERFACE ---
+// --- FUNÇÕES DE INTERFACE ---
 function setupGrids() {
     createGrid("my-board", true);
     createGrid("opponent-board", true);
@@ -154,23 +173,43 @@ function onCellClick(boardId, x, y, cell) {
             shipsPlaced++;
             cell.classList.add("cell-ship");
         }
-    } else if (boardId === 'opponent-board' && isMyTurn) {
-        if (cell.classList.contains("cell-hit") || cell.classList.contains("cell-miss")) return;
+    } 
+    else if (boardId === 'opponent-board' && isMyTurn) {
+        if (cell.classList.contains("cell-hit") || cell.classList.contains("cell-miss")) {
+            return;
+        }
         
         server.call('fire_shot', { pos: [x, y] });
-        setTurn(false);
+        setTurn(false); 
     }
 }
 
 function updateGridDisplay(boardId, pos, result) {
-    const cell = document.querySelector(`#${boardId} td[data-x="${pos[0]}"][data-y="${pos[1]}"]`);
-    if (cell) cell.classList.add(result === 'hit' ? "cell-hit" : "cell-miss");
+    const [x, y] = pos;
+    const cell = document.querySelector(`#${boardId} td[data-x="${x}"][data-y="${y}"]`);
+    if (!cell) return;
+
+    if (result === 'hit') {
+        cell.classList.add("cell-hit");
+    } else {
+        cell.classList.add("cell-miss");
+    }
 }
 
 function setTurn(myTurn) {
     isMyTurn = myTurn;
     statusEl.innerText = myTurn ? "Sua vez de atirar!" : "Aguarde a vez do oponente...";
-    document.getElementById("opponent-board").classList.toggle("turn-disabled", !myTurn);
+    
+    const oppBoard = document.getElementById("opponent-board");
+    if (myTurn) {
+        oppBoard.classList.remove("turn-disabled");
+        document.body.classList.add("my-turn");
+        document.body.classList.remove("opponent-turn");
+    } else {
+        oppBoard.classList.add("turn-disabled");
+        document.body.classList.remove("my-turn");
+        document.body.classList.add("opponent-turn");
+    }
 }
 
 // --- EVENTOS DE CLIQUE ---
