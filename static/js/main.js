@@ -5,8 +5,12 @@ class GameServerProxy {
     }
 
     call(type, payload = {}) {
-        const message = JSON.stringify({ type, ...payload });
-        this.ws.send(message);
+        if (this.ws.readyState === WebSocket.OPEN) {
+            const message = JSON.stringify({ type, ...payload });
+            this.ws.send(message);
+        } else {
+            console.warn("WebSocket não está aberto. Estado:", this.ws.readyState);
+        }
     }
 }
 
@@ -38,14 +42,23 @@ function connect() {
         return alert("Por favor, insira um nome e um código de sala de 4 dígitos.");
     }
 
+    statusEl.innerText = "Conectando ao servidor...";
+
+    // Identifica se está rodando localmente ou na web
     const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
     
-    const backendHost = isLocal ? "127.0.0.1:8000" : "seu-backend-no-render.onrender.com";
+    // Seu host do Render conforme imagem image_259505.png
+    const backendHost = isLocal ? "127.0.0.1:8000" : "batalha-naval-2scs.onrender.com";
+    
+    // Força WSS (seguro) se a página estiver em HTTPS (Vercel)
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-
-    const ws = new WebSocket(`${protocol}://${backendHost}/ws/${roomId}?username=${username}`);
+    const wsUrl = `${protocol}://${backendHost}/ws/${roomId}?username=${username}`;
+    
+    console.log("Tentando conectar em:", wsUrl);
+    const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
+        console.log("Conectado com sucesso!");
         server = new GameServerProxy(ws);
         document.getElementById("lobby-container").style.display = 'none';
         document.getElementById("game-container").style.display = 'block';
@@ -56,13 +69,22 @@ function connect() {
         handleServerMessage(msg);
     };
 
+    ws.onclose = (event) => {
+        console.log("WebSocket fechado:", event);
+        statusEl.innerText = "Conexão perdida. O servidor pode estar iniciando...";
+        // Tenta reconectar após 5 segundos se o servidor estiver "acordando"
+        if (!isLocal) {
+            setTimeout(connect, 5000);
+        }
+    };
+
     ws.onerror = (error) => {
         console.error("Erro no WebSocket:", error);
-        statusEl.innerText = "Erro de conexão com o servidor.";
+        statusEl.innerText = "Erro ao conectar. O servidor do Render está acordando, aguarde...";
     };
 }
 
-// --- DESPACHANTE DE MENSAGENS (RPC RECEIVER) ---
+// --- DESPACHANTE DE MENSAGENS ---
 function handleServerMessage(msg) {
     const roomId = document.getElementById("roomInput").value.toUpperCase();
 
@@ -76,20 +98,12 @@ function handleServerMessage(msg) {
             shipsPlaced = 0;
             meuTabuleiro = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
             isMyTurn = false;
-            
             infoEl.innerText = `SALA: ${roomId} | Oponente: ${msg.opponent_name}`;
-            statusEl.innerText = "Posicione seus 5 navios no seu tabuleiro";
-            
+            statusEl.innerText = "Posicione seus 5 navios";
             setupGrids();
-            
             prepareButton.style.display = 'block';
             rematchButton.style.display = 'none';
             document.getElementById("opponent-board").classList.remove("turn-disabled");
-            break;
-
-        case 'wait_for_setup':
-            statusEl.innerText = "Aguardando oponente posicionar os navios...";
-            prepareButton.style.display = 'none';
             break;
 
         case 'start_play':
@@ -98,53 +112,28 @@ function handleServerMessage(msg) {
 
         case 'shot_result':
             updateGridDisplay("opponent-board", msg.pos, msg.result);
-            // Sincroniza o turno baseado na resposta do servidor
             if (msg.turn) setTurn(msg.turn === 'you');
             break;
 
         case 'shot_received':
             updateGridDisplay("my-board", msg.pos, msg.result);
-            // Sincroniza o turno baseado na resposta do servidor
             if (msg.turn) setTurn(msg.turn === 'you');
-            break;
-
-        case 'rematch_requested':
-            statusEl.innerText = "O oponente quer uma revanche!";
             break;
 
         case 'game_over':
             const isWin = msg.result === 'you_win';
-            const imgPath = isWin ? 'img/win.svg' : 'img/lose.svg';
-            
-            statusEl.innerHTML = `
-                <div style="text-align:center">
-                    <img src="${imgPath}" style="width:80px; display:block; margin: 0 auto 10px">
-                    <span style="color: ${isWin ? '#64ffda' : '#ff4d4d'}">
-                        ${isWin ? "VITÓRIA GLORIOSA!" : "VOCÊ FOI AFUNDADO..."}
-                    </span>
-                </div>
-            `;
-            
+            statusEl.innerText = isWin ? "VITÓRIA!" : "DERROTA!";
             document.getElementById("opponent-board").classList.add("turn-disabled");
             rematchButton.style.display = 'block';
             break;
 
-        case 'opponent_left':
-            statusEl.innerText = "Oponente desconectou.";
-            infoEl.innerText = "Partida encerrada.";
-            rematchButton.style.display = 'none';
-            break;
-            
         case 'error':
             alert(msg.message);
-            if (msg.message.includes("vez") || msg.message.includes("atirou")) {
-                setTurn(true);
-            }
             break;
     }
 }
 
-// --- FUNÇÕES DE INTERFACE ---
+// --- FUNÇÕES DE GRID ---
 function setupGrids() {
     createGrid("my-board", true);
     createGrid("opponent-board", true);
@@ -152,6 +141,7 @@ function setupGrids() {
 
 function createGrid(id, clickable) {
     const table = document.querySelector(`#${id} .grid`);
+    if (!table) return;
     table.innerHTML = "";
     for (let y = 0; y < BOARD_SIZE; y++) {
         let tr = document.createElement("tr");
@@ -173,65 +163,38 @@ function onCellClick(boardId, x, y, cell) {
             shipsPlaced++;
             cell.classList.add("cell-ship");
         }
-    } 
-    else if (boardId === 'opponent-board' && isMyTurn) {
-        if (cell.classList.contains("cell-hit") || cell.classList.contains("cell-miss")) {
-            return;
-        }
-        
+    } else if (boardId === 'opponent-board' && isMyTurn) {
+        if (cell.classList.contains("cell-hit") || cell.classList.contains("cell-miss")) return;
         server.call('fire_shot', { pos: [x, y] });
-        setTurn(false); 
+        setTurn(false);
     }
 }
 
 function updateGridDisplay(boardId, pos, result) {
-    const [x, y] = pos;
-    const cell = document.querySelector(`#${boardId} td[data-x="${x}"][data-y="${y}"]`);
-    if (!cell) return;
-
-    if (result === 'hit') {
-        cell.classList.add("cell-hit");
-    } else {
-        cell.classList.add("cell-miss");
-    }
+    const cell = document.querySelector(`#${boardId} td[data-x="${pos[0]}"][data-y="${pos[1]}"]`);
+    if (cell) cell.classList.add(result === 'hit' ? "cell-hit" : "cell-miss");
 }
 
 function setTurn(myTurn) {
     isMyTurn = myTurn;
-    statusEl.innerText = myTurn ? "Sua vez de atirar!" : "Aguarde a vez do oponente...";
-    
-    const oppBoard = document.getElementById("opponent-board");
-    if (myTurn) {
-        oppBoard.classList.remove("turn-disabled");
-        document.body.classList.add("my-turn");
-        document.body.classList.remove("opponent-turn");
-    } else {
-        oppBoard.classList.add("turn-disabled");
-        document.body.classList.remove("my-turn");
-        document.body.classList.add("opponent-turn");
-    }
+    statusEl.innerText = myTurn ? "Sua vez!" : "Vez do oponente...";
+    document.getElementById("opponent-board").classList.toggle("turn-disabled", !myTurn);
 }
 
-// --- EVENTOS DE CLIQUE ---
+// --- EVENTOS ---
 joinButton.onclick = connect;
-
 createButton.onclick = () => {
     const code = Math.random().toString(36).substring(2, 6).toUpperCase();
     document.getElementById("roomInput").value = code;
     connect();
 };
-
 prepareButton.onclick = () => {
     if (shipsPlaced === SHIP_COUNT) {
         server.call('board_setup', { board: meuTabuleiro });
         prepareButton.style.display = 'none';
-    } else {
-        alert(`Posicione todos os ${SHIP_COUNT} navios primeiro!`);
     }
 };
-
 rematchButton.onclick = () => {
     server.call('request_rematch');
     rematchButton.style.display = 'none';
-    statusEl.innerText = "Aguardando oponente aceitar revanche...";
 };
