@@ -1,0 +1,22 @@
+# Ambientes Virtuais (Python)
+venv/
+env/
+ENV/
+.env
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Arquivos de Sistema
+.DS_Store
+Thumbs.db
+
+# Banco de dados local / Scores (Opcional)
+# É melhor que cada pessoa comece com o seu próprio placar vazio
+persistent_scores.json
+
+# IDEs
+.vscode/
+.idea/

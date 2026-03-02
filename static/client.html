@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Batalha Naval Distribuida</title>
+    <link rel="stylesheet" href="./css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    
+    <div id="lobby-container">
+        <h1>Batalha Naval</h1>
+        <input type="text" id="usernameInput" placeholder="SEU NOME" maxlength="15">
+        <input type="text" id="roomInput" placeholder="CODIGO DA SALA" maxlength="4">
+        <button id="joinButton">Entrar na Sala</button>
+        <hr>
+        <button id="createButton">Criar Nova Sala</button>
+    </div>
+
+    <div id="game-container" style="display: none;">
+        <div id="score-display"></div>
+        <h2 id="status">Conectando ao servidor...</h2>
+        <div id="game-room-info" style="font-weight: bold; color: #007bff; margin: 10px 0;"></div>
+        <button id="rematchButton" style="display: none;">Jogar Novamente</button>
+        
+        <div id="game-area">
+            <button id="prepareButton" style="display: none;">Estou Pronto</button>
+        </div>
+
+        <div id="game-boards">
+            <div class="board-container">
+                <h3>Meu Tabuleiro</h3>
+                <div id="my-board"><table class="grid"></table></div>
+            </div>
+            <div class="board-container">
+                <h3>Tabuleiro do Oponente</h3>
+                <div id="opponent-board"><table class="grid"></table></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="./js/main.js"></script>
+</body>
+</html>
